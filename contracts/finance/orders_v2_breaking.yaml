@@ -1,0 +1,40 @@
+contract_id: "contracts.finance.orders"
+version: "2.0.0"
+owner: "finance-engineering@company.com"
+status: "active"
+
+edge_schema:
+  type: "object"
+  additional_properties: false
+  properties:
+    event_id:
+      type: "string"
+      format: "uuid"
+    tenant_id:
+      type: "string"
+      pattern: "^org_[a-z0-9]{8}$"
+    customer_id:
+      type: "integer"
+      minimum: 1
+    amount_decimal:
+      type: "float"
+      minimum: 0.01
+    event_timestamp:
+      type: "string"
+      format: "date-time"
+  required:
+    - "event_id"
+    - "tenant_id"
+    - "customer_id"
+    - "amount_decimal"
+    - "event_timestamp"
+
+warehouse_model:
+  target_table: "prod_marts.fct_daily_orders"
+  dialect: "bigquery"
+  columns:
+    order_id: "STRING"
+    tenant_id: "STRING"
+    gross_revenue: "NUMERIC"
+    order_timestamp: "TIMESTAMP"
+

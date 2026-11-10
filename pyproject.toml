@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aegis-contract"
+version = "2.0.0"
+description = "Dual-Boundary Data Contract & SQL AST Governance Engine"
+authors = [
+    { name = "Harshit Kandpal", email = "kandpalharshit21@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "pydantic>=2.10.0",
+    "sqlglot>=26.0.0",
+    "duckdb>=1.1.0",
+    "pyyaml>=6.0.2",
+    "httpx>=0.28.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0"
+]
+
+[project.scripts]
+aegis = "src.cli.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
