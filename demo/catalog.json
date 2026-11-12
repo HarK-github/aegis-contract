@@ -1,0 +1,8 @@
+{
+  "raw_orders": {
+    "order_id": "STRING",
+    "tenant_id": "STRING",
+    "amount_cents": "INT64",
+    "created_at": "TIMESTAMP"
+  }
+}
