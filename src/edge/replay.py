@@ -2,13 +2,17 @@
 Idempotent DLQ Replay Worker for AegisContract.
 Reads quarantined events, validates them against updated contracts,
 and replays them with strict deduplication and forensic audit metadata.
+Extracts unmasked payloads from replay_payload_b64 to prevent backfilling redacted strings.
 """
 
+import os
 import json
+import base64
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable
+from cryptography.fernet import Fernet
 
 
 class ReplayStateStore:
@@ -70,15 +74,36 @@ class DLQReplayWorker:
 
         for record in dlq_records:
             dlq_id = record.get("dlq_id", "unknown")
-            raw_payload = record.get("raw_payload", {})
-            raw_bytes = json.dumps(raw_payload).encode("utf-8")
+
+            # Extract unmasked payload for machine replay
+            if "replay_payload_enc" in record and record["replay_payload_enc"]:
+                try:
+                    replay_key = os.getenv("AEGIS_REPLAY_KEY")
+                    if not replay_key:
+                        raise RuntimeError("AEGIS_REPLAY_KEY is required to decrypt replay payloads")
+                    fernet = Fernet(replay_key.encode("utf-8") if isinstance(replay_key, str) else replay_key)
+                    raw_bytes = fernet.decrypt(record["replay_payload_enc"].encode("ascii"))
+                    raw_payload = json.loads(raw_bytes.decode("utf-8"))
+                except Exception:
+                    raw_payload = record.get("sanitized_payload", record.get("raw_payload", {}))
+                    raw_bytes = json.dumps(raw_payload).encode("utf-8")
+            elif "replay_payload_b64" in record and record["replay_payload_b64"]:
+                try:
+                    raw_bytes = base64.b64decode(record["replay_payload_b64"])
+                    raw_payload = json.loads(raw_bytes.decode("utf-8"))
+                except Exception:
+                    raw_payload = record.get("sanitized_payload", record.get("raw_payload", {}))
+                    raw_bytes = json.dumps(raw_payload).encode("utf-8")
+            else:
+                raw_payload = record.get("sanitized_payload", record.get("raw_payload", {}))
+                raw_bytes = json.dumps(raw_payload).encode("utf-8")
 
             # Determine deduplication key (prefer tenant:event_id, fallback to sha256)
             tenant_id = raw_payload.get("tenant_id", "default")
-            event_id = raw_payload.get("event_id") or record.get("payload_sha256")
+            event_id = raw_payload.get("event_id") or record.get("payload_hmac_sha256")
             dedup_key = f"{tenant_id}:{event_id}"
 
-            # Check if already replayed
+            # Check if already replayed (idempotency barrier)
             if self.state_store.has_replayed(dedup_key):
                 skipped_duplicate_count += 1
                 continue
