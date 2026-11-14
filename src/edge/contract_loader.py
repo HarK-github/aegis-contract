@@ -21,6 +21,11 @@ TYPE_MAP = {
 }
 
 
+def sanitize_validation_errors(errors: list[dict]) -> list[dict]:
+    """Strips sensitive raw input and ctx keys from Pydantic ValidationError dicts."""
+    return [{k: v for k, v in err.items() if k not in ("input", "ctx")} for err in errors]
+
+
 class CompiledContract:
     """Wrapper holding a compiled Pydantic model and its parent contract specification."""
 
@@ -45,7 +50,7 @@ class CompiledContract:
             # Dump to serializable dictionary
             return True, instance.model_dump(mode="json"), None
         except ValidationError as err:
-            return False, None, err.errors()
+            return False, None, sanitize_validation_errors(err.errors())
         except Exception as e:
             return False, None, [{"type": "unparseable_json", "msg": str(e), "loc": ["body"]}]
 
@@ -58,6 +63,12 @@ def compile_contract_from_yaml(yaml_path: str) -> CompiledContract:
     return compile_contract_from_dict(spec)
 
 
+SUPPORTED_PROPERTY_KEYWORDS = {
+    "type", "format", "enum", "minimum", "maximum", "pattern", "description"
+}
+SUPPORTED_BASE_TYPES = {"string", "integer", "number", "float", "boolean"}
+
+
 def compile_contract_from_dict(spec: dict) -> CompiledContract:
     """Compiles contract dictionary spec into a CompiledContract."""
     properties = spec.get("edge_schema", {}).get("properties", {})
@@ -65,8 +76,31 @@ def compile_contract_from_dict(spec: dict) -> CompiledContract:
     fields: dict[str, Any] = {}
 
     for name, prop in properties.items():
-        prop_type = prop.get("type", "string")
+        if not isinstance(prop, dict):
+            raise ValueError(f"Property '{name}' definition must be a mapping")
+
+        # Check for unsupported keywords
+        unsupported = sorted(list(set(prop.keys()) - SUPPORTED_PROPERTY_KEYWORDS))
+        if unsupported:
+            raise ValueError(
+                f"Unsupported keyword(s) {unsupported} in property '{name}'. "
+                f"Supported: {sorted(list(SUPPORTED_PROPERTY_KEYWORDS))}"
+            )
+
+        prop_type = prop.get("type")
+        if prop_type not in SUPPORTED_BASE_TYPES:
+            raise ValueError(
+                f"Unknown or unsupported property type '{prop_type}' in property '{name}'. "
+                f"Supported types: {sorted(list(SUPPORTED_BASE_TYPES))}"
+            )
+
         prop_format = prop.get("format")
+        if prop_format is not None:
+            if prop_type != "string" or prop_format not in ("uuid", "date-time"):
+                raise ValueError(
+                    f"Unsupported format '{prop_format}' for type '{prop_type}' in property '{name}'"
+                )
+
         enum_values = prop.get("enum")
 
         # 1. Resolve Python typing
@@ -74,7 +108,11 @@ def compile_contract_from_dict(spec: dict) -> CompiledContract:
             # Dynamically build Literal[tuple(enum_values)]
             py_type = Literal[tuple(enum_values)]  # type: ignore
         else:
-            py_type = TYPE_MAP.get((prop_type, prop_format), str)
+            if (prop_type, prop_format) not in TYPE_MAP:
+                raise ValueError(
+                    f"No type mapping found for property '{name}' (type='{prop_type}', format='{prop_format}')"
+                )
+            py_type = TYPE_MAP[(prop_type, prop_format)]
 
         is_required = name in required
         default_val = ... if is_required else None

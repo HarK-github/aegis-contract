@@ -99,7 +99,10 @@ def test_multiline_dbt_jinja_control_blocks_stripped(linter):
 
 
 def test_diff_field_made_optional_is_additive():
-    """Relaxing a required field to optional is an additive, non-breaking MINOR change."""
+    """
+    Relaxing a required field to optional is an ADDITIVE (MINOR) change for producers,
+    but flagged as a breaking warning for downstream consumers that expect NOT NULL.
+    """
     old_spec = {
         "version": "1.0.0",
         "edge_schema": {
@@ -117,12 +120,14 @@ def test_diff_field_made_optional_is_additive():
 
     diff = compare_contracts(old_spec, new_spec)
     assert diff.bump_type == "MINOR"
-    assert diff.is_breaking is False
-    assert any("relaxed to OPTIONAL" in r for r in diff.additive_reasons)
+    assert diff.is_breaking_for_producer is False
+    assert diff.is_breaking_for_consumer is True
+    assert any("relaxed to OPTIONAL" in r for r in diff.producer_additive_reasons)
+    assert any("nullable/optional" in w for w in diff.consumer_breaking_warnings)
 
 
 def test_diff_enum_removal_is_breaking():
-    """Removing an allowed value from an enum narrows input validity and is BREAKING (MAJOR)."""
+    """Removing an allowed value from an enum narrows input validity and is BREAKING (MAJOR) for both."""
     old_spec = {
         "version": "1.0.0",
         "edge_schema": {
@@ -144,12 +149,15 @@ def test_diff_enum_removal_is_breaking():
 
     diff = compare_contracts(old_spec, new_spec)
     assert diff.bump_type == "MAJOR"
-    assert diff.is_breaking is True
-    assert any("removed allowed enum values" in r for r in diff.breaking_reasons)
+    assert diff.is_breaking_for_producer is True
+    assert any("removed allowed enum values" in r for r in diff.producer_breaking_reasons)
 
 
 def test_diff_enum_expansion_is_additive():
-    """Adding an allowed value to an enum expands input validity and is ADDITIVE (MINOR)."""
+    """
+    Adding an allowed value to an enum expands input validity and is ADDITIVE (MINOR) for producers,
+    but flagged as a consumer warning (risk of unhandled enum variants in downstream transforms).
+    """
     old_spec = {
         "version": "1.0.0",
         "edge_schema": {
@@ -171,5 +179,7 @@ def test_diff_enum_expansion_is_additive():
 
     diff = compare_contracts(old_spec, new_spec)
     assert diff.bump_type == "MINOR"
-    assert diff.is_breaking is False
-    assert any("added new allowed enum values" in r for r in diff.additive_reasons)
+    assert diff.is_breaking_for_producer is False
+    assert diff.is_breaking_for_consumer is True
+    assert any("added new allowed enum values" in r for r in diff.producer_additive_reasons)
+    assert any("added enum variants" in w for w in diff.consumer_breaking_warnings)

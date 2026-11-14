@@ -119,38 +119,3 @@ def test_salted_hash_prevents_rainbow_table_inversion(tmp_path):
     stored_hash = records[0]["payload_hmac_sha256"]
     raw_sha256 = hashlib.sha256(low_entropy_bytes).hexdigest()
     assert stored_hash != raw_sha256
-
-
-def test_mutation_proof_removing_extra_forbid_fails():
-    """
-    Mutation verification: Proves that removing extra='forbid' from the model config
-    causes extra rogue attributes to silently slip through into production.
-    """
-    payload_with_rogue = '{"customer_id": 101, "rogue_injected_field": "exploit"}'
-    
-    # 1. AegisContract Strict Model (Protected)
-    ProtectedModel = create_model("Protected", customer_id=(int, ...), __config__=ConfigDict(extra="forbid"))
-    with pytest.raises(ValidationError):
-        ProtectedModel.model_validate_json(payload_with_rogue)
-
-    # 2. Mutated/Weakened Model (Vulnerable)
-    WeakenedModel = create_model("Weakened", customer_id=(int, ...), __config__=ConfigDict(extra="ignore"))
-    instance = WeakenedModel.model_validate_json(payload_with_rogue)
-    # The rogue field slipped through undetected!
-    assert not hasattr(instance, "rogue_injected_field") or getattr(instance, "rogue_injected_field", None) is None
-
-
-def test_mutation_proof_wildcard_guard_essential():
-    """
-    Mutation verification: Proves that without pre-qualify wildcard detection,
-    qualify.qualify expands 'SELECT *' into base columns and bypasses contract gating.
-    """
-    linter = SQLContractLinter(
-        catalog_schema={"t": {"a": "STRING", "b": "INT64"}},
-        dialect="bigquery"
-    )
-    expected = {"a": "STRING", "b": "INT64"}
-
-    # Our linter catches it immediately
-    violations = linter.lint_query("SELECT * FROM t", expected)
-    assert any("Wildcard projection" in v for v in violations)

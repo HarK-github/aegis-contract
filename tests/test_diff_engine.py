@@ -14,13 +14,13 @@ def test_additive_change_classified_as_minor():
 
     diff = compare_contracts(v1, v1_1)
     assert diff.bump_type == "MINOR"
-    assert diff.is_breaking is False
-    assert len(diff.breaking_reasons) == 0
-    assert any("discount_code" in r for r in diff.additive_reasons)
+    assert diff.is_breaking_for_producer is False
+    assert diff.is_breaking_for_consumer is False
+    assert any("discount_code" in r for r in diff.producer_additive_reasons)
 
     # Check markdown rendering
     md = diff.to_markdown_report()
-    assert "ADDITIVE CHANGE" in md
+    assert "MINOR ADDITIVE" in md
     assert "discount_code" in md
 
 
@@ -30,10 +30,9 @@ def test_breaking_change_classified_as_major():
 
     diff = compare_contracts(v1, v2)
     assert diff.bump_type == "MAJOR"
-    assert diff.is_breaking is True
-    assert len(diff.breaking_reasons) >= 1
-    # Check that deleted currency field or changed amount is captured
-    assert any("currency" in r for r in diff.breaking_reasons)
+    assert diff.is_breaking_for_producer is True
+    assert diff.is_breaking_for_consumer is True
+    assert any("currency" in r for r in diff.producer_breaking_reasons)
 
     md = diff.to_markdown_report()
-    assert "BREAKING CHANGE" in md
+    assert "MAJOR BREAKING CHANGE" in md

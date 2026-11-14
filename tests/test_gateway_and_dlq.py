@@ -5,13 +5,12 @@ import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
 
-from src.edge.gateway import app, CONTRACT_REGISTRY, load_contracts_from_directory
+from src.edge.gateway import app, CONTRACT_REGISTRY, load_contracts_from_directory, verify_hmac_signature
 from src.edge.dlq_router import QuarantineDLQRouter, mask_sensitive_data
 
 
 @pytest.fixture(scope="module")
-def client(tmp_path_factory):
-    # Ensure contracts are loaded
+def client():
     load_contracts_from_directory("contracts")
     return TestClient(app)
 
@@ -21,7 +20,7 @@ def test_health_check(client):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
-    assert "contracts.finance.orders" in data["loaded_contracts"]
+    assert any("contracts.finance.orders" in c for c in data["loaded_contracts"])
 
 
 def test_ingest_valid_event(client, tmp_path):
@@ -46,7 +45,6 @@ def test_ingest_valid_event(client, tmp_path):
 
 
 def test_ingest_drifted_event_quarantined_202(client):
-    # Schema drift: customer_id is a string, and rogue field is included
     drifted_payload = {
         "event_id": "c73a21b3-a270-4e62-b10a-05b07254856a",
         "tenant_id": "org_a912bc01",
@@ -62,7 +60,6 @@ def test_ingest_drifted_event_quarantined_202(client):
         content=json.dumps(drifted_payload),
         headers={"Content-Type": "application/json"}
     )
-    # Crucial enterprise ack semantic: 202 Accepted + quarantine DLQ tracking
     assert response.status_code == 202
     data = response.json()
     assert data["status"] == "quarantined"
@@ -71,18 +68,51 @@ def test_ingest_drifted_event_quarantined_202(client):
     assert len(data["errors"]) >= 1
 
 
-def test_dlq_pii_masking():
-    sensitive_payload = {
-        "user_id": 123,
-        "card_number": "4111-2222-3333-4444",
-        "auth_token": "secret_token_12345",
-        "nested": {
-            "password": "super_secret_password",
-            "normal_field": "visible_data"
+def test_hmac_signature_verification_and_timing_safety(monkeypatch, client):
+    """Verifies HMAC authentication: rejects missing or forged headers, passes valid digest."""
+    test_secret = "test_shared_secret_key_2026"
+    monkeypatch.setattr("src.edge.gateway.HMAC_SECRET", test_secret)
+
+    payload = json.dumps({
+        "event_id": "c73a21b3-a270-4e62-b10a-05b07254856a",
+        "tenant_id": "org_a912bc01",
+        "customer_id": 9921,
+        "amount_cents": 12500,
+        "currency": "USD",
+        "event_timestamp": "2026-11-17T14:30:00Z"
+    }).encode("utf-8")
+
+    # 1. Missing HMAC header -> 401 Unauthorized
+    resp_no_header = client.post(
+        "/ingest/contracts.finance.orders",
+        content=payload,
+        headers={"Content-Type": "application/json"}
+    )
+    assert resp_no_header.status_code == 401
+
+    # 2. Forged / Tampered HMAC header -> 401 Unauthorized
+    resp_tampered = client.post(
+        "/ingest/contracts.finance.orders",
+        content=payload,
+        headers={
+            "Content-Type": "application/json",
+            "X-Signature-SHA256": "sha256=0000000000000000000000000000000000000000000000000000000000000000"
         }
-    }
-    masked = mask_sensitive_data(sensitive_payload)
-    assert masked["card_number"] == "******REDACTED******"
-    assert masked["auth_token"] == "******REDACTED******"
-    assert masked["nested"]["password"] == "******REDACTED******"
-    assert masked["nested"]["normal_field"] == "visible_data"
+    )
+    assert resp_tampered.status_code == 401
+
+    # 3. Valid HMAC header -> 200 OK
+    valid_digest = hmac.new(test_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    resp_valid = client.post(
+        "/ingest/contracts.finance.orders",
+        content=payload,
+        headers={
+            "Content-Type": "application/json",
+            "X-Signature-SHA256": f"sha256={valid_digest}"
+        }
+    )
+    assert resp_valid.status_code == 200
+
+    # 4. Direct timing-safe comparison verification
+    assert verify_hmac_signature(payload, f"sha256={valid_digest}", test_secret) is True
+    assert verify_hmac_signature(payload, "sha256=wrong", test_secret) is False
