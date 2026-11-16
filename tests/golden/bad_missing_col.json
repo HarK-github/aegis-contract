@@ -1,0 +1,1 @@
+{"files":[{"path":"demo/sample_queries/bad_missing_col.sql","violations":[{"actual":null,"column":"gross_revenue","expected":"NUMERIC","line":null,"message":"Model 'bad_missing_col.sql': Contract Violation - Missing declared column 'gross_revenue' (expected NUMERIC).","rule":"MISSING_COLUMN"}]}],"schema_version":1,"summary":{"files":1,"violations":1}}
