@@ -20,43 +20,126 @@ from src.edge.replay import DLQReplayWorker
 import duckdb
 
 
+def resolve_sql_paths(sql_args: list[str]) -> list[Path]:
+    """Resolves a list of files or directories into a sorted, unique list of SQL Path objects."""
+    resolved = []
+    for arg in sql_args:
+        p = Path(arg)
+        if not p.exists():
+            raise FileNotFoundError(f"SQL path not found: '{arg}'")
+        if p.is_dir():
+            sql_files = sorted(list(p.rglob("*.sql")))
+            if not sql_files:
+                raise FileNotFoundError(f"No .sql files found in directory: '{arg}'")
+            resolved.extend(sql_files)
+        elif p.is_file():
+            resolved.append(p)
+        else:
+            raise ValueError(f"Unsupported path type: '{arg}'")
+    return sorted(list(set(resolved)))
+
+
+def to_repo_relative_path(path: Path) -> str:
+    """Converts a Path to a repo-relative POSIX string."""
+    cwd = Path.cwd().resolve()
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(cwd).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def cmd_validate_sql(args):
-    """Validates a SQL transformation file against a contract warehouse_model."""
-    sql_path = Path(args.sql)
-    contract_path = Path(args.contract)
+    """Validates SQL transformation file(s) against a contract warehouse_model."""
+    try:
+        contract_path = Path(args.contract)
+        if not contract_path.exists():
+            print(f"Error: Contract file not found at '{contract_path}'", file=sys.stderr)
+            sys.exit(2)
 
-    if not sql_path.exists():
-        print(f"❌ Error: SQL file not found at {sql_path}", file=sys.stderr)
-        sys.exit(1)
-    if not contract_path.exists():
-        print(f"❌ Error: Contract file not found at {contract_path}", file=sys.stderr)
-        sys.exit(1)
+        try:
+            with open(contract_path, "r", encoding="utf-8") as f:
+                contract_spec = yaml.safe_load(f)
+        except Exception as e:
+            print(f"Error: Failed to parse contract YAML: {e}", file=sys.stderr)
+            sys.exit(2)
 
-    with open(contract_path, "r", encoding="utf-8") as f:
-        contract_spec = yaml.safe_load(f)
+        expected_cols = contract_spec.get("warehouse_model", {}).get("columns", {})
+        dialect = contract_spec.get("warehouse_model", {}).get("dialect", "bigquery")
+        contract_id = contract_spec.get("contract_id", "unnamed_contract")
 
-    expected_cols = contract_spec.get("warehouse_model", {}).get("columns", {})
-    dialect = contract_spec.get("warehouse_model", {}).get("dialect", "bigquery")
+        catalog = {}
+        if args.catalog:
+            cat_path = Path(args.catalog)
+            if not cat_path.exists():
+                print(f"Error: Catalog file not found at '{args.catalog}'", file=sys.stderr)
+                sys.exit(2)
+            try:
+                with open(cat_path, "r", encoding="utf-8") as f:
+                    catalog = json.load(f)
+            except Exception as e:
+                print(f"Error: Failed to parse catalog JSON: {e}", file=sys.stderr)
+                sys.exit(2)
 
-    catalog = {}
-    if args.catalog and Path(args.catalog).exists():
-        with open(args.catalog, "r", encoding="utf-8") as f:
-            catalog = json.load(f)
-
-    with open(sql_path, "r", encoding="utf-8") as f:
-        sql_content = f.read()
+        sql_paths = resolve_sql_paths(args.sql)
+    except FileNotFoundError as fnf:
+        print(f"Error: {fnf}", file=sys.stderr)
+        sys.exit(2)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
 
     linter = SQLContractLinter(catalog_schema=catalog, dialect=dialect)
-    violations = linter.lint_query(sql_content, expected_cols, model_name=sql_path.name)
 
-    if violations:
-        print(f"❌ AegisContract Gating Failed: {len(violations)} violation(s) found in {sql_path.name}:")
-        for v in violations:
-            print(f"   • {v}")
-        sys.exit(1)
+    file_results = []
+    total_violations = 0
+
+    for sql_path in sql_paths:
+        try:
+            with open(sql_path, "r", encoding="utf-8") as f:
+                sql_content = f.read()
+        except Exception as e:
+            print(f"Error reading SQL file '{sql_path}': {e}", file=sys.stderr)
+            sys.exit(2)
+
+        model_name = sql_path.name
+        rel_path = to_repo_relative_path(sql_path)
+        violations = linter.lint_query_structured(sql_content, expected_cols, model_name=model_name)
+        total_violations += len(violations)
+
+        file_results.append({
+            "path": rel_path,
+            "violations": violations
+        })
+
+    # Sort files deterministically by repo-relative posix path
+    file_results.sort(key=lambda x: x["path"])
+
+    if getattr(args, "format", "text") == "json":
+        doc = {
+            "schema_version": 1,
+            "files": file_results,
+            "summary": {
+                "files": len(file_results),
+                "violations": total_violations
+            }
+        }
+        json_output = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        print(json_output)
+        sys.exit(1 if total_violations > 0 else 0)
     else:
-        print(f"✅ AegisContract Passed: SQL model '{sql_path.name}' strictly complies with '{contract_spec.get('contract_id')}'.")
-        sys.exit(0)
+        # Default text format
+        for f_res in file_results:
+            p_name = Path(f_res["path"]).name
+            viols = f_res["violations"]
+            if viols:
+                print(f"❌ AegisContract Gating Failed: {len(viols)} violation(s) found in {p_name}:")
+                for v in viols:
+                    print(f"   • {v['message']}")
+            else:
+                print(f"✅ AegisContract Passed: SQL model '{p_name}' strictly complies with '{contract_id}'.")
+
+        sys.exit(1 if total_violations > 0 else 0)
 
 
 def cmd_diff_contract(args):
@@ -148,9 +231,10 @@ def main():
 
     # validate-sql
     p_val = subparsers.add_parser("validate-sql", help="Lint SQL model against contract schema via AST")
-    p_val.add_argument("--sql", required=True, help="Path to .sql transformation file")
+    p_val.add_argument("--sql", nargs="+", required=True, help="Path(s) to .sql transformation file(s) or directory")
     p_val.add_argument("--contract", required=True, help="Path to contract .yaml")
     p_val.add_argument("--catalog", default=None, help="Optional path to warehouse schema catalog JSON")
+    p_val.add_argument("--format", choices=["text", "json"], default="text", help="Output format: text (default) or json")
     p_val.set_defaults(func=cmd_validate_sql)
 
     # diff-contract

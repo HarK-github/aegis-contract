@@ -5,7 +5,7 @@ strip common dbt Jinja macros via regex approximation, detect wildcards, and ver
 """
 
 import re
-from typing import Optional, Dict, List, Set
+from typing import Optional, Dict, List, Set, Any
 import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer import qualify, annotate_types
@@ -34,6 +34,36 @@ def are_types_compatible(inferred_type: str, expected_type: str) -> bool:
             return True
 
     return False
+
+
+def find_token_line(raw_sql: str, token: Optional[str]) -> Optional[int]:
+    """Finds the 1-indexed line number in raw_sql containing token as a word or substring."""
+    if not token or not raw_sql:
+        return None
+    token = token.strip()
+    if not token:
+        return None
+
+    # Handle wildcards
+    if token == "*" or token.endswith(".*"):
+        for i, line in enumerate(raw_sql.splitlines(), start=1):
+            if "*" in line:
+                return i
+
+    # Try word boundary
+    try:
+        pattern = re.compile(r'\b' + re.escape(token) + r'\b', re.IGNORECASE)
+        for i, line in enumerate(raw_sql.splitlines(), start=1):
+            if pattern.search(line):
+                return i
+    except Exception:
+        pass
+
+    # Substring fallback
+    for i, line in enumerate(raw_sql.splitlines(), start=1):
+        if token.lower() in line.lower():
+            return i
+    return None
 
 
 class SQLContractLinter:
@@ -69,29 +99,46 @@ class SQLContractLinter:
         sql = re.sub(r"\{\{.*?\}\}", "", sql)
         return sql
 
-    def lint_query(
+    def lint_query_structured(
         self,
         raw_sql: str,
         expected_columns: Dict[str, str],
         model_name: str = "unnamed_model"
-    ) -> List[str]:
-        violations = []
+    ) -> List[Dict[str, Any]]:
+        """
+        Performs static AST contract linting and returns structured violation records matching Phase 1 schema.
+        Rules: WILDCARD | MISSING_COLUMN | TYPE_MISMATCH | PARSE_ERROR | UNKNOWN_TABLE
+        """
+        violations: List[Dict[str, Any]] = []
         clean_sql = self.mock_dbt_jinja(raw_sql)
 
         try:
             ast = sqlglot.parse_one(clean_sql, read=self.dialect)
             if ast is None:
-                return [f"Model '{model_name}': SQL parsed to empty AST."]
+                violations.append({
+                    "line": None,
+                    "rule": "PARSE_ERROR",
+                    "column": None,
+                    "expected": None,
+                    "actual": None,
+                    "message": f"Model '{model_name}': SQL parsed to empty AST."
+                })
+                return violations
 
             # 1. Prohibit Wildcards (SELECT *, SELECT t.*, SELECT schema.t.*) BEFORE qualify expands them!
             for select_exp in ast.selects:
                 if select_exp.find(exp.Star) is not None:
-                    violations.append(
-                        f"Model '{model_name}': Wildcard projection '{select_exp.sql()}' is prohibited in contract-governed models."
-                    )
+                    star_sql = select_exp.sql()
+                    violations.append({
+                        "line": find_token_line(raw_sql, star_sql) or 1,
+                        "rule": "WILDCARD",
+                        "column": star_sql,
+                        "expected": None,
+                        "actual": star_sql,
+                        "message": f"Model '{model_name}': Wildcard projection '{star_sql}' is prohibited in contract-governed models."
+                    })
 
             # 2. Qualify query against warehouse schema catalog (resolves CTEs, table names, aliases, and JOINs)
-            # Register this_target automatically from expected contract columns to support incremental models
             effective_catalog = dict(self.catalog)
             if "this_target" not in effective_catalog:
                 effective_catalog["this_target"] = expected_columns
@@ -100,10 +147,38 @@ class SQLContractLinter:
                 ast = qualify.qualify(ast, schema=effective_catalog, dialect=self.dialect, validate_qualify_columns=False)
                 ast = annotate_types.annotate_types(ast, schema=effective_catalog)
             except Exception as q_err:
-                violations.append(f"Model '{model_name}': Qualification warning: {str(q_err)}")
+                violations.append({
+                    "line": None,
+                    "rule": "UNKNOWN_TABLE",
+                    "column": None,
+                    "expected": None,
+                    "actual": None,
+                    "message": f"Model '{model_name}': Qualification warning: {str(q_err)}"
+                })
 
+        except sqlglot.errors.ParseError as pe:
+            err_line = None
+            if hasattr(pe, "errors") and pe.errors:
+                err_line = pe.errors[0].get("line")
+            violations.append({
+                "line": err_line,
+                "rule": "PARSE_ERROR",
+                "column": None,
+                "expected": None,
+                "actual": None,
+                "message": f"Model '{model_name}': Syntax / AST Parse Failure: {str(pe)}"
+            })
+            return violations
         except Exception as e:
-            return [f"Model '{model_name}': Syntax / AST Parse Failure: {str(e)}"]
+            violations.append({
+                "line": None,
+                "rule": "PARSE_ERROR",
+                "column": None,
+                "expected": None,
+                "actual": None,
+                "message": f"Model '{model_name}': Syntax / AST Parse Failure: {str(e)}"
+            })
+            return violations
 
         # 3. Extract top-level projected columns and inferred types
         projected_columns: Dict[str, str] = {}
@@ -116,21 +191,54 @@ class SQLContractLinter:
         # 4. Check for missing required columns and type compatibility
         for exp_col, exp_type in expected_columns.items():
             if exp_col not in projected_columns:
-                violations.append(
-                    f"Model '{model_name}': Contract Violation - Missing declared column '{exp_col}' (expected {exp_type})."
-                )
+                violations.append({
+                    "line": None,
+                    "rule": "MISSING_COLUMN",
+                    "column": exp_col,
+                    "expected": exp_type,
+                    "actual": None,
+                    "message": f"Model '{model_name}': Contract Violation - Missing declared column '{exp_col}' (expected {exp_type})."
+                })
             else:
                 inferred_type = projected_columns[exp_col]
                 if not are_types_compatible(inferred_type, exp_type):
-                    violations.append(
-                        f"Model '{model_name}': Type Mismatch on '{exp_col}' - Expected {exp_type}, but SQL inferred {inferred_type}."
-                    )
+                    violations.append({
+                        "line": find_token_line(raw_sql, exp_col),
+                        "rule": "TYPE_MISMATCH",
+                        "column": exp_col,
+                        "expected": exp_type,
+                        "actual": inferred_type,
+                        "message": f"Model '{model_name}': Type Mismatch on '{exp_col}' - Expected {exp_type}, but SQL inferred {inferred_type}."
+                    })
 
         # 5. Check for undeclared extra columns
         extra_columns = set(projected_columns.keys()) - set(expected_columns.keys())
-        if extra_columns:
-            violations.append(
-                f"Model '{model_name}': Contract Violation - Undeclared extra columns projected: {sorted(list(extra_columns))}."
-            )
+        for extra_col in sorted(list(extra_columns)):
+            inf_type = projected_columns.get(extra_col)
+            violations.append({
+                "line": find_token_line(raw_sql, extra_col),
+                "rule": "TYPE_MISMATCH",
+                "column": extra_col,
+                "expected": None,
+                "actual": inf_type,
+                "message": f"Model '{model_name}': Contract Violation - Undeclared extra column '{extra_col}' projected (expected null, inferred {inf_type})."
+            })
 
+        # Deterministic sort by (line, column, rule)
+        violations.sort(key=lambda v: (
+            v["line"] if v["line"] is not None else -1,
+            v["column"] or "",
+            v["rule"],
+            v["message"]
+        ))
         return violations
+
+    def lint_query(
+        self,
+        raw_sql: str,
+        expected_columns: Dict[str, str],
+        model_name: str = "unnamed_model"
+    ) -> List[str]:
+        """Backwards-compatible string-list interface for existing tests and callers."""
+        structured = self.lint_query_structured(raw_sql, expected_columns, model_name)
+        return [v["message"] for v in structured]
