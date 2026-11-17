@@ -1,0 +1,211 @@
+name: aegis-sql-guard
+
+on:
+  pull_request:
+    paths:
+      - "models/**/*.sql"
+      - "contracts/**"
+      - "demo/catalog.json"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.13.5"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -e .
+
+      - name: Validate changed SQL models
+        id: run_validation
+        run: |
+          # Identify changed SQL files
+          CHANGED_SQL=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'models/**/*.sql' || true)
+          if [ -z "$CHANGED_SQL" ]; then
+            if [ -d "models" ]; then
+              CHANGED_SQL=$(find models -name "*.sql" || true)
+            fi
+          fi
+
+          if [ -z "$CHANGED_SQL" ]; then
+            echo '{"schema_version":1,"files":[],"summary":{"files":0,"violations":0}}' > aegis_validation.json
+            echo "VALIDATE_EXIT=0" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          set +e
+          aegis validate-sql --contract contracts/finance/orders_v1.yaml --catalog demo/catalog.json --format json --sql $CHANGED_SQL > aegis_validation.json
+          VALIDATE_EXIT=$?
+          set -e
+          echo "VALIDATE_EXIT=$VALIDATE_EXIT" >> $GITHUB_ENV
+          if [ $VALIDATE_EXIT -ne 0 ]; then
+            exit $VALIDATE_EXIT
+          fi
+
+      - name: Upload validation results artifact
+        if: always()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: validation-results
+          path: aegis_validation.json
+          retention-days: 7
+
+  suggest:
+    needs: validate
+    if: >-
+      always() &&
+      needs.validate.result == 'failure' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.13.5"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -e .
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@71f986410dfbc7added4569d411d040a91dc6935 # v2.1.8
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Download validation artifact
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          name: validation-results
+
+      - name: Run suggest-fix for failing files
+        id: run_suggest
+        run: |
+          python3 -c "
+          import json, subprocess, os
+          from pathlib import Path
+
+          with open('aegis_validation.json', 'r', encoding='utf-8') as f:
+              data = json.load(f)
+
+          failing_files = [f_info['path'] for f_info in data.get('files', []) if f_info.get('violations')]
+          # Limit to at most 5 files
+          targets = failing_files[:5]
+          suggestions = []
+
+          for idx, path in enumerate(targets):
+              cmd = [
+                  'aegis', 'suggest-fix',
+                  '--sql', path,
+                  '--contract', 'contracts/finance/orders_v1.yaml',
+                  '--catalog', 'demo/catalog.json',
+                  '--llm-mode', 'live'
+              ]
+              res = subprocess.run(cmd, capture_output=True, text=True)
+              try:
+                  res_json = json.loads(res.stdout)
+              except Exception:
+                  res_json = {
+                      'schema_version': 1,
+                      'path': path,
+                      'status': 'unverified',
+                      'attempts': 0,
+                      'failed_checks': ['CLI_INTERNAL_ERROR'],
+                      'fixed_sql': None,
+                      'unified_diff': None
+                  }
+              suggestions.append(res_json)
+
+          with open('suggestions_summary.json', 'w', encoding='utf-8') as out:
+              json.dump({'validation': data, 'suggestions': suggestions}, out)
+          "
+
+      - name: Post or update PR comment
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = JSON.parse(fs.readFileSync('suggestions_summary.json', 'utf8'));
+            const marker = '<!-- aegis-suggest -->';
+
+            let body = `${marker}\n## Aegis Contract SQL Guard Report\n\n`;
+
+            const valFiles = summary.validation.files || [];
+            const suggestions = summary.suggestions || [];
+            const sugMap = {};
+            for (const s of suggestions) {
+              sugMap[s.path] = s;
+            }
+
+            for (const file of valFiles) {
+              const violations = file.violations || [];
+              if (violations.length === 0) continue;
+
+              body += `### \`${file.path}\`\n\n`;
+              body += `**Violations Found (${violations.length}):**\n`;
+              for (const v of violations) {
+                const lineInfo = v.line ? `Line ${v.line}` : 'Line ?';
+                body += `- **${v.rule}** (${lineInfo}): ${v.message}\n`;
+              }
+              body += '\n';
+
+              const sug = sugMap[file.path];
+              if (sug && sug.status === 'verified' && sug.unified_diff) {
+                body += `> [!NOTE]\n`;
+                body += `> **AI-PROPOSED, VERIFIED AGAINST THE LINTER, STILL NEEDS HUMAN REVIEW. The linter checks output columns and types, not business correctness.**\n\n`;
+                body += `\`\`\`diff\n${sug.unified_diff}\n\`\`\`\n\n`;
+              } else if (sug && sug.status === 'unverified') {
+                body += `*AI proposal status: unverified (failed checks: ${sug.failed_checks.join(', ')}). No suggestion applied.*\n\n`;
+              } else {
+                body += `*No suggestion generated (capped or skipped).*\n\n`;
+              }
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
