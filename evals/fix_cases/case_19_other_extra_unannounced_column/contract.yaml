@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_19_other_extra_unannounced_column
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_19_other_extra_unannounced_column
+  dialect: bigquery
+  columns:
+    transaction_id: VARCHAR
+    user_id: VARCHAR

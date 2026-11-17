@@ -1,0 +1,6 @@
+{
+  "inventory": {
+    "item_id": "VARCHAR",
+    "state": "VARCHAR"
+  }
+}

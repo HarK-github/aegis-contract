@@ -1,0 +1,6 @@
+{
+  "client_records": {
+    "client_id": "VARCHAR",
+    "revenue": "DECIMAL"
+  }
+}

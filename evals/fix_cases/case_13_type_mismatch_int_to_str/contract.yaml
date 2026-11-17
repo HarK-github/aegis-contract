@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_13_type_mismatch_int_to_str
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_13_type_mismatch_int_to_str
+  dialect: bigquery
+  columns:
+    account_id: VARCHAR
+    balance_cents: VARCHAR

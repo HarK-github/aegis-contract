@@ -1,0 +1,7 @@
+{
+  "employees": {
+    "department_id": "VARCHAR",
+    "employee_id": "VARCHAR",
+    "headcount": "BIGINT"
+  }
+}

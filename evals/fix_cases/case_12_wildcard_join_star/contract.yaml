@@ -1,0 +1,11 @@
+contract_id: contracts.eval.case_12_wildcard_join_star
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_12_wildcard_join_star
+  dialect: bigquery
+  columns:
+    id: VARCHAR
+    name: VARCHAR
+    val: VARCHAR

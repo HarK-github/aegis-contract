@@ -1,0 +1,6 @@
+{
+  "user_profiles": {
+    "user_id": "VARCHAR",
+    "is_active": "BOOLEAN"
+  }
+}

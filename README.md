@@ -136,7 +136,56 @@ Evaluated against a synthetic 5,000-event benchmark stream featuring **472 injec
 
 ---
 
-## 5. Quickstart & Local Reproduction
+## 5. AI-Assisted SQL Fixes (`aegis suggest-fix`)
+
+AegisContract includes an automated fix proposal loop for transformation models that fail contract validation.
+
+### Architectural Invariant: LLM Proposes, Deterministic Linter Disposes
+The large language model acts strictly as an untrusted proposal generator. It has no authority to approve or merge queries. The deterministic AST linter is the sole authority governing whether any SQL proposal passes. 
+
+Every proposal must satisfy six verification checks before acceptance:
+1. Strict schema parse (`LLMFixResponse(extra="forbid")`)
+2. Valid AST with exactly one `SELECT`/`WITH` statement (no DDL/DML)
+3. Identical set of `{{ ref() }}` and `{{ source() }}` macros
+4. Identical set of referenced base tables
+5. Line diff touches at most 30 lines
+6. Zero linter violations when re-analyzed by `SQLContractLinter`
+
+If a proposal fails any check, the failure reason is recorded and only the new violation list is fed into attempt 2 (maximum 2 attempts).
+
+### Data Minimization
+Data transmitted to the model is strictly limited to four fields:
+1. `sql_text`: The transformation model text.
+2. `violations`: The structured violation list from `aegis validate-sql --format json`.
+3. `contract_columns`: Expected output column names and types.
+4. `catalog`: Warehouse schema names and column data types.
+
+No database rows, client PII, credentials, or file paths outside the model are ever transmitted.
+
+### CI/CD Security & Fork-PR Restriction
+The GitHub Actions workflow (`.github/workflows/aegis-sql-guard.yml`) separates validation from fix suggestion:
+- **`validate` job**: Runs `aegis validate-sql --format json` on all pull requests. Fails the build on exit codes 1 (violations) or 2 (error). Contains no credentials.
+- **`suggest` job**: Runs only when `validate` fails on non-fork pull requests (`github.event.pull_request.head.repo.full_name == github.repository`). Pull requests from forks are excluded to prevent untrusted code execution or prompt injection against Workload Identity Federation credentials. `pull_request_target` is never used.
+- **Live execution status**: Live execution of the GitHub Action is untested until run in a repository with configured GCP Workload Identity Federation credentials.
+- **Scope limitation**: The linter checks output columns and types, not business correctness. Human review remains mandatory for all verified proposals.
+
+### Evaluation Results (Offline Benchmark Suite)
+Evaluated across 20 benchmark test cases in `evals/fix_cases/` across 5 categories:
+- **Total Cases**: 20
+- **Verified Proposals**: 17 / 20
+- **Unverified Proposals**: 3 / 20 (rejected by deterministic checks: schema failure, table addition, remaining violations)
+- **Mean Attempts**: 1.20
+- **Per-Category Verified Counts**:
+  - Missing Column: 4 / 4
+  - Renamed Column: 4 / 4
+  - Wildcard: 4 / 4
+  - Type Mismatch: 4 / 4
+  - Other: 1 / 4
+- **Faithfulness**: The `faithful` column in `evals/results/fix_eval.csv` is intentionally left blank for manual human review to assess business logic correctness; the automated loop verifies syntactic and contract schema compliance only.
+
+---
+
+## 6. Quickstart & Local Reproduction
 
 The entire platform runs locally in a clean virtual environment with zero cloud credentials.
 
@@ -148,7 +197,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Run the Test Suite (31 Tests Passing, 0 Warnings)
+### 2. Run the Test Suite (54 Tests Passing, 0 Warnings)
 ```bash
 pytest -v
 ```

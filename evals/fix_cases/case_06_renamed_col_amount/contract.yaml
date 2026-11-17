@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_06_renamed_col_amount
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_06_renamed_col_amount
+  dialect: bigquery
+  columns:
+    order_id: VARCHAR
+    total_price: DECIMAL

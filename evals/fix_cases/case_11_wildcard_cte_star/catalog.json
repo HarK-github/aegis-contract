@@ -1,0 +1,6 @@
+{
+  "items": {
+    "id": "VARCHAR",
+    "code": "VARCHAR"
+  }
+}

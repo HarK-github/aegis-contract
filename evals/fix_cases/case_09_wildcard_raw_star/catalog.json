@@ -1,0 +1,7 @@
+{
+  "products": {
+    "product_id": "VARCHAR",
+    "name": "VARCHAR",
+    "price": "DECIMAL"
+  }
+}

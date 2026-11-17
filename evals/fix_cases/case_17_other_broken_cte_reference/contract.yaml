@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_17_other_broken_cte_reference
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_17_other_broken_cte_reference
+  dialect: bigquery
+  columns:
+    id: VARCHAR
+    val: VARCHAR

@@ -1,0 +1,6 @@
+{
+  "events": {
+    "event_id": "VARCHAR",
+    "created_at": "TIMESTAMP"
+  }
+}

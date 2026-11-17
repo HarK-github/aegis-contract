@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_16_type_mismatch_bool_to_varchar
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_16_type_mismatch_bool_to_varchar
+  dialect: bigquery
+  columns:
+    user_id: VARCHAR
+    is_active: VARCHAR

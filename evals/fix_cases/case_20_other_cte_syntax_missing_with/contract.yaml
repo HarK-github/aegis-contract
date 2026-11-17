@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_20_other_cte_syntax_missing_with
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_20_other_cte_syntax_missing_with
+  dialect: bigquery
+  columns:
+    a: VARCHAR
+    b: VARCHAR

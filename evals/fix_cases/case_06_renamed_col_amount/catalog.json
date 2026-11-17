@@ -1,0 +1,6 @@
+{
+  "sales": {
+    "order_id": "VARCHAR",
+    "price": "DECIMAL"
+  }
+}

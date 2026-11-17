@@ -1,0 +1,10 @@
+{
+  "t1": {
+    "id": "VARCHAR",
+    "name": "VARCHAR"
+  },
+  "t2": {
+    "id": "VARCHAR",
+    "val": "VARCHAR"
+  }
+}

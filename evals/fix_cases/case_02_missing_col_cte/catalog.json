@@ -1,0 +1,6 @@
+{
+  "orders": {
+    "order_id": "VARCHAR",
+    "amount": "BIGINT"
+  }
+}

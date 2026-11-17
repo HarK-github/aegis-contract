@@ -1,0 +1,11 @@
+{
+  "orders": {
+    "order_id": "VARCHAR",
+    "customer_id": "VARCHAR",
+    "status": "VARCHAR"
+  },
+  "customers": {
+    "customer_id": "VARCHAR",
+    "customer_name": "VARCHAR"
+  }
+}

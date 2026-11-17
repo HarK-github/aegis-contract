@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_11_wildcard_cte_star
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_11_wildcard_cte_star
+  dialect: bigquery
+  columns:
+    id: VARCHAR
+    code: VARCHAR

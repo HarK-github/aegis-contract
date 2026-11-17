@@ -1,0 +1,6 @@
+{
+  "products": {
+    "product_id": "VARCHAR",
+    "sku": "VARCHAR"
+  }
+}

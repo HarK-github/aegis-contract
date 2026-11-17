@@ -1,0 +1,11 @@
+contract_id: contracts.eval.case_03_missing_col_multitable
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_03_missing_col_multitable
+  dialect: bigquery
+  columns:
+    order_id: VARCHAR
+    customer_name: VARCHAR
+    status: VARCHAR

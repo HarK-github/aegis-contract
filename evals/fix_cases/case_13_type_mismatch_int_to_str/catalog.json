@@ -1,0 +1,6 @@
+{
+  "accounts": {
+    "account_id": "VARCHAR",
+    "balance_cents": "BIGINT"
+  }
+}

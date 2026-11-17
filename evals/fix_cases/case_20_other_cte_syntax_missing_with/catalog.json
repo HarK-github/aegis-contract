@@ -1,0 +1,6 @@
+{
+  "test_tbl": {
+    "a": "VARCHAR",
+    "b": "VARCHAR"
+  }
+}

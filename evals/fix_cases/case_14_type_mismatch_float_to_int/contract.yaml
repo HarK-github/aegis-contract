@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_14_type_mismatch_float_to_int
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_14_type_mismatch_float_to_int
+  dialect: bigquery
+  columns:
+    metric_id: VARCHAR
+    score: BIGINT

@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_07_renamed_col_date
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_07_renamed_col_date
+  dialect: bigquery
+  columns:
+    event_id: VARCHAR
+    occurred_at: TIMESTAMP

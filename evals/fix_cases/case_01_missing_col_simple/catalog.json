@@ -1,0 +1,7 @@
+{
+  "orders": {
+    "order_id": "VARCHAR",
+    "customer_id": "VARCHAR",
+    "total_amount": "DECIMAL"
+  }
+}

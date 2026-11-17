@@ -1,0 +1,6 @@
+{
+  "logs": {
+    "session_id": "VARCHAR",
+    "log_date": "DATE"
+  }
+}

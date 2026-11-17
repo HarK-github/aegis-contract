@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_18_other_wrong_column_alias
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_18_other_wrong_column_alias
+  dialect: bigquery
+  columns:
+    client_id: VARCHAR
+    revenue: DECIMAL

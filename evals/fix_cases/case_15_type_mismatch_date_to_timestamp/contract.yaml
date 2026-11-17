@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_15_type_mismatch_date_to_timestamp
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_15_type_mismatch_date_to_timestamp
+  dialect: bigquery
+  columns:
+    session_id: VARCHAR
+    log_date: TIMESTAMP

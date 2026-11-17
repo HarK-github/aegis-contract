@@ -1,0 +1,11 @@
+contract_id: contracts.eval.case_01_missing_col_simple
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_01_missing_col_simple
+  dialect: bigquery
+  columns:
+    order_id: VARCHAR
+    customer_id: VARCHAR
+    total_amount: DECIMAL

@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_04_missing_col_aggregate
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_04_missing_col_aggregate
+  dialect: bigquery
+  columns:
+    department_id: VARCHAR
+    headcount: BIGINT

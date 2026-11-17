@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_10_wildcard_table_star
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_10_wildcard_table_star
+  dialect: bigquery
+  columns:
+    product_id: VARCHAR
+    sku: VARCHAR

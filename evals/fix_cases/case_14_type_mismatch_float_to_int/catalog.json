@@ -1,0 +1,6 @@
+{
+  "metrics": {
+    "metric_id": "VARCHAR",
+    "score": "DOUBLE"
+  }
+}

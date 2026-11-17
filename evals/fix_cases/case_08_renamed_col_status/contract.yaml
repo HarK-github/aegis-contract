@@ -1,0 +1,10 @@
+contract_id: contracts.eval.case_08_renamed_col_status
+version: 1.0.0
+dataset: eval_dataset
+boundary: warehouse
+warehouse_model:
+  target_table: eval_marts.case_08_renamed_col_status
+  dialect: bigquery
+  columns:
+    item_id: VARCHAR
+    status: VARCHAR
