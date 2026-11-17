@@ -1,0 +1,8 @@
+{
+  "max_output_tokens": 2048,
+  "model_name": "gemini-1.5-pro",
+  "prompt_version": "v1",
+  "request_hash": "2c9b43f6f61ee94b72d2ccbbc5b66a7a03eba49be0a3d113dfe2c8cc417cc914",
+  "response": "{\"fixed_sql\":\"SELECT \\n    order_id,\\n    tenant_id,\\n    amount_cents / 100.0 AS gross_revenue,\\n    created_at AS order_timestamp\\nFROM raw_orders\"}",
+  "temperature": 0.0
+}

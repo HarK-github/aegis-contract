@@ -16,6 +16,8 @@ from src.warehouse.runtime_assertions import WarehouseAssertionRunner
 from src.edge.contract_loader import compile_contract_from_yaml
 from src.edge.dlq_router import QuarantineDLQRouter
 from src.edge.replay import DLQReplayWorker
+from src.ai.fix_loop import run_suggest_fix
+from src.ai.llm import ReplayClient, RecordingClient, VertexGeminiClient, MissingFixtureError
 
 import duckdb
 
@@ -225,6 +227,64 @@ def cmd_run_assertions(args):
     sys.exit(0)
 
 
+def cmd_suggest_fix(args):
+    """Proposes an AI-assisted SQL fix and deterministically verifies it."""
+    try:
+        sql_path = Path(args.sql)
+        contract_path = Path(args.contract)
+        catalog_path = Path(args.catalog) if args.catalog else None
+
+        if not sql_path.exists():
+            print(f"Error: SQL file not found at '{sql_path}'", file=sys.stderr)
+            sys.exit(2)
+        if not contract_path.exists():
+            print(f"Error: Contract file not found at '{contract_path}'", file=sys.stderr)
+            sys.exit(2)
+        if catalog_path and not catalog_path.exists():
+            print(f"Error: Catalog file not found at '{catalog_path}'", file=sys.stderr)
+            sys.exit(2)
+
+        # Select LLM client
+        llm_mode = getattr(args, "llm_mode", "replay")
+        fixtures_dir = getattr(args, "fixtures_dir", "fixtures/llm")
+
+        if llm_mode == "replay":
+            client = ReplayClient(fixtures_dir=fixtures_dir)
+        elif llm_mode == "record":
+            live = VertexGeminiClient()
+            client = RecordingClient(live_client=live, fixtures_dir=fixtures_dir)
+        elif llm_mode == "live":
+            client = VertexGeminiClient()
+        else:
+            print(f"Error: Unknown llm_mode '{llm_mode}'", file=sys.stderr)
+            sys.exit(2)
+
+        model_name = getattr(args, "model", "gemini-1.5-pro")
+
+        result = run_suggest_fix(
+            sql_path=sql_path,
+            contract_path=contract_path,
+            catalog_path=catalog_path,
+            client=client,
+            model_name=model_name
+        )
+
+        output_json = json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        print(output_json)
+
+        if result["status"] == "verified":
+            sys.exit(0)
+        else:
+            sys.exit(1)
+
+    except MissingFixtureError as mfe:
+        print(f"Error: {mfe}", file=sys.stderr)
+        sys.exit(2)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="aegis", description="AegisContract Dual-Boundary Data Contract Engine")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -236,6 +296,16 @@ def main():
     p_val.add_argument("--catalog", default=None, help="Optional path to warehouse schema catalog JSON")
     p_val.add_argument("--format", choices=["text", "json"], default="text", help="Output format: text (default) or json")
     p_val.set_defaults(func=cmd_validate_sql)
+
+    # suggest-fix
+    p_sug = subparsers.add_parser("suggest-fix", help="Propose and deterministically verify an AI-assisted SQL contract fix")
+    p_sug.add_argument("--sql", required=True, help="Path to .sql transformation file to fix")
+    p_sug.add_argument("--contract", required=True, help="Path to contract .yaml")
+    p_sug.add_argument("--catalog", default=None, help="Optional path to warehouse schema catalog JSON")
+    p_sug.add_argument("--llm-mode", choices=["live", "record", "replay"], default="replay", help="LLM interaction mode (default: replay)")
+    p_sug.add_argument("--model", default="gemini-1.5-pro", help="Model name (default: gemini-1.5-pro)")
+    p_sug.add_argument("--fixtures-dir", default="fixtures/llm", help="Directory for LLM fixtures (default: fixtures/llm)")
+    p_sug.set_defaults(func=cmd_suggest_fix)
 
     # diff-contract
     p_diff = subparsers.add_parser("diff-contract", help="Compare two contracts and classify SemVer bump")
